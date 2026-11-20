@@ -25,9 +25,11 @@ def create_session(
     lecturer: User = Depends(require_role("lecturer", "admin")),
     db: Session = Depends(get_db),
 ):
-    course_exists = db.scalar(select(exists().where(Course.id == payload.course_id)))
-    if not course_exists:
+    course = db.get(Course, payload.course_id)
+    if not course:
         raise HTTPException(status_code=404, detail="Course not found")
+    if lecturer.role != "admin" and course.lecturer_id != lecturer.id:
+        raise HTTPException(status_code=403, detail="Lecturer is not assigned to this course")
     starts = datetime.now(timezone.utc)
     expires = starts + timedelta(minutes=payload.duration_minutes)
     session = AttendanceSession(
