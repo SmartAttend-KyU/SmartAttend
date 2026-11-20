@@ -1,3 +1,8 @@
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+
 from app.db.session import Base, SessionLocal, engine
 from app.models.user import User
 from app.models.course import Course, CourseEnrollment
@@ -24,6 +29,6 @@ try:
     db.flush()
     db.add(CourseEnrollment(course_id=course.id, student_id=student.id))
     db.commit()
-    print("Demo data created.")
+    print("Demo data created. Demo credentials use the ChangeMe123! password.")
 finally:
     db.close()
