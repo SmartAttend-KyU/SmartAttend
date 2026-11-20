@@ -21,7 +21,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         record_audit_event(
             db,
             event_type="LOGIN_FAILED",
-            details=f"university_id={payload.university_id}",
+            details="invalid_credentials",
         )
         db.commit()
         raise HTTPException(
