@@ -40,7 +40,7 @@ jobs:
           DATABASE_URL: postgresql+psycopg://smartattend:smartattend@localhost:5432/smartattend_test
           SECRET_KEY: ci-secret-key
           JWT_SECRET_KEY: ci-jwt-secret-key
-        run: python scripts/seed_demo.py
+        run: python -m scripts.seed_demo
 
   backend:
     runs-on: ubuntu-latest
