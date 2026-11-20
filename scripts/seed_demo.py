@@ -1,36 +1,6 @@
 from pathlib import Path
+import subprocess
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-
-from app.db.session import Base, SessionLocal, engine
-from app.models.user import User
-from app.models.course import Course, CourseEnrollment
-from app.security.passwords import hash_password
-
-Base.metadata.create_all(bind=engine)
-
-db = SessionLocal()
-try:
-    lecturer = User(
-        university_id="LECT001",
-        email="lecturer@example.com",
-        password_hash=hash_password("ChangeMe123!"),
-        role="lecturer",
-    )
-    student = User(
-        university_id="STU001",
-        email="student@example.com",
-        password_hash=hash_password("ChangeMe123!"),
-        role="student",
-    )
-    db.add_all([lecturer, student])
-    db.flush()
-    course = Course(code="SMART101", name="SmartAttend Demo Course", lecturer_id=lecturer.id)
-    db.add(course)
-    db.flush()
-    db.add(CourseEnrollment(course_id=course.id, student_id=student.id))
-    db.commit()
-    print("Demo data created. Demo credentials use the ChangeMe123! password.")
-finally:
-    db.close()
+ROOT = Path(__file__).resolve().parents[1]
+subprocess.run([sys.executable, "-m", "scripts.seed_demo"], cwd=ROOT / "backend", check=True)

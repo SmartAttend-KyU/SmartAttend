@@ -7,6 +7,41 @@ on:
     branches: ["main"]
 
 jobs:
+  database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: smartattend_test
+          POSTGRES_USER: smartattend
+          POSTGRES_PASSWORD: smartattend
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smartattend -d smartattend_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r backend/requirements.txt
+      - working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://smartattend:smartattend@localhost:5432/smartattend_test
+          SECRET_KEY: ci-secret-key
+          JWT_SECRET_KEY: ci-jwt-secret-key
+        run: alembic upgrade head
+      - working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://smartattend:smartattend@localhost:5432/smartattend_test
+          SECRET_KEY: ci-secret-key
+          JWT_SECRET_KEY: ci-jwt-secret-key
+        run: python -m scripts.seed_demo
+
   backend:
     runs-on: ubuntu-latest
     steps:
