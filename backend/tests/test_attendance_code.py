@@ -1,3 +1,9 @@
+import os
+
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret")
+os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+
 from datetime import datetime, timezone
 from app.services.attendance import verification_code
 
