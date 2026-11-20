@@ -8,6 +8,7 @@ class Course(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
+    lecturer_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
 
 class CourseEnrollment(Base):
     __tablename__ = "course_enrolments"
