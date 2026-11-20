@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta, timezone
+import hmac
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.attendance import AttendanceRecord, AttendanceSession
-from app.models.course import CourseEnrollment
+from app.models.course import Course, CourseEnrollment
 from app.models.user import User
 from app.schemas.attendance import (
     AttendanceResponse,
@@ -24,7 +25,7 @@ def create_session(
     lecturer: User = Depends(require_role("lecturer", "admin")),
     db: Session = Depends(get_db),
 ):
-    course_exists = db.scalar(select(exists().where(__import__("app.models.course", fromlist=["Course"]).Course.id == payload.course_id)))
+    course_exists = db.scalar(select(exists().where(Course.id == payload.course_id)))
     if not course_exists:
         raise HTTPException(status_code=404, detail="Course not found")
     starts = datetime.now(timezone.utc)
