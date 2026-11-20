@@ -24,8 +24,10 @@ try:
         password_hash=hash_password("ChangeMe123!"),
         role="student",
     )
-    course = Course(code="SMART101", name="SmartAttend Demo Course")
-    db.add_all([lecturer, student, course])
+    db.add_all([lecturer, student])
+    db.flush()
+    course = Course(code="SMART101", name="SmartAttend Demo Course", lecturer_id=lecturer.id)
+    db.add(course)
     db.flush()
     db.add(CourseEnrollment(course_id=course.id, student_id=student.id))
     db.commit()
