@@ -32,6 +32,8 @@ jobs:
       - working-directory: backend
         env:
           DATABASE_URL: postgresql+psycopg://smartattend:smartattend@localhost:5432/smartattend_test
+          SECRET_KEY: ci-secret-key
+          JWT_SECRET_KEY: ci-jwt-secret-key
         run: alembic upgrade head
       - working-directory: backend
         env:
