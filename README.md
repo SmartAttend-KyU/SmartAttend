@@ -94,9 +94,9 @@ Technical documentation is maintained under docs/ for architecture, database des
 
 ## Development Status
 
-**Repository initialization / architectural scaffolding.**
+**MVP foundation implemented.**
 
-The repository is structured so frontend, backend, database, security, testing and documentation responsibilities remain separated as implementation grows.
+The repository now contains a runnable FastAPI backend, PostgreSQL-backed data model, JWT/RBAC security layer, rotating attendance verification codes, a minimal Next.js verification screen, Docker Compose development services and GitHub Actions CI. QR scanning, full role-based dashboards, migrations, centralized audit logging, rate limiting and production monitoring remain to be implemented.
 
 ## License
 
