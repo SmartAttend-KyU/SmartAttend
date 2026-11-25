@@ -41,12 +41,7 @@ def session_status(session, at: datetime | None = None) -> str:
 
 
 def _session_totp_secret(session_id: int) -> bytes:
-    """Derive a unique TOTP secret from the server secret and session ID.
-
-    The secret is never exposed to the browser and does not need to be stored
-    separately in PostgreSQL. A database compromise therefore does not reveal
-    the TOTP signing key without the application secret.
-    """
+    """Derive a unique TOTP secret from the server secret and session ID."""
     settings = get_settings()
     message = f"smartattend:totp:{session_id}".encode("utf-8")
     return hmac.new(
@@ -57,9 +52,33 @@ def _session_totp_secret(session_id: int) -> bytes:
 
 
 def totp_counter(at: datetime, interval_seconds: int) -> int:
-    if interval_seconds < MIN_REFRESH_INTERVAL_SECONDS or interval_seconds > MAX_REFRESH_INTERVAL_SECONDS:
-        raise ValueError("TOTP interval must be between 5 and 15 seconds")
+    if not MIN_REFRESH_INTERVAL_SECONDS <= interval_seconds <= MAX_REFRESH_INTERVAL_SECONDS:
+        raise ValueError("SmartAttend TOTP interval must be between 5 and 15 seconds")
     return int(at.timestamp()) // interval_seconds
+
+
+def totp_code_from_secret(
+    secret: bytes,
+    at: datetime,
+    *,
+    interval_seconds: int,
+    digits: int = TOTP_DIGITS,
+) -> str:
+    """Generate an RFC 6238 HOTP/TOTP value for a supplied shared secret.
+
+    This generic helper permits RFC reference-vector intervals. SmartAttend's
+    public session path separately restricts its configured interval to 5–15 s.
+    """
+    if interval_seconds <= 0:
+        raise ValueError("TOTP interval must be positive")
+    if digits <= 0:
+        raise ValueError("TOTP digits must be positive")
+
+    counter = int(at.timestamp()) // interval_seconds
+    digest = hmac.new(secret, struct.pack(">Q", counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    binary = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return f"{binary % (10 ** digits):0{digits}d}"
 
 
 def totp_code(
@@ -68,18 +87,15 @@ def totp_code(
     *,
     interval_seconds: int = DEFAULT_REFRESH_INTERVAL_SECONDS,
 ) -> str:
-    """Generate an RFC 6238-compatible 6-digit TOTP using SHA-1.
-
-    SmartAttend intentionally uses a configurable 5–15 second time step
-    (default 10 seconds) to match the proposal's rotating verification window.
-    """
+    """Generate SmartAttend's 6-digit RFC 6238-compatible TOTP."""
     instant = at or utc_now()
-    counter = totp_counter(instant, interval_seconds)
-    secret = _session_totp_secret(session_id)
-    digest = hmac.new(secret, struct.pack(">Q", counter), hashlib.sha1).digest()
-    offset = digest[-1] & 0x0F
-    binary = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
-    return f"{binary % (10 ** TOTP_DIGITS):0{TOTP_DIGITS}d}"
+    totp_counter(instant, interval_seconds)
+    return totp_code_from_secret(
+        _session_totp_secret(session_id),
+        instant,
+        interval_seconds=interval_seconds,
+        digits=TOTP_DIGITS,
+    )
 
 
 def validate_totp(

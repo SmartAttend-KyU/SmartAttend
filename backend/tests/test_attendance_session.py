@@ -18,7 +18,11 @@ from app.models.attendance import AttendanceSession
 from app.models.course import Course
 from app.models.user import User
 from app.security.passwords import hash_password
-from app.services.attendance import build_qr_token, totp_code, validate_qr_token
+from app.services.attendance import (
+    build_qr_token,
+    totp_code_from_secret,
+    validate_qr_token,
+)
 
 
 engine = create_engine(
@@ -51,7 +55,7 @@ def _login(university_id: str) -> str:
 
 
 def _headers(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": "Bearer " + token}
 
 
 def setup_function():
@@ -130,6 +134,21 @@ def test_create_session_returns_six_digit_totp_and_qr():
     assert body["qr_code"].startswith("data:image/svg+xml;base64,")
 
 
+def test_refresh_interval_must_be_between_five_and_fifteen_seconds():
+    token = _login("LECT001")
+    for value in (4, 16):
+        response = client.post(
+            "/api/attendance/sessions",
+            headers=_headers(token),
+            json={
+                "course_id": 1,
+                "duration_minutes": 15,
+                "refresh_interval_seconds": value,
+            },
+        )
+        assert response.status_code == 422
+
+
 def test_server_rejects_expired_session():
     token = _login("LECT001")
     response = client.post(
@@ -146,7 +165,7 @@ def test_server_rejects_expired_session():
     db.close()
 
     expired = client.get(
-        f"/api/attendance/sessions/{session_id}",
+        "/api/attendance/sessions/" + str(session_id),
         headers=_headers(token),
     )
     assert expired.status_code == 200
@@ -165,14 +184,14 @@ def test_ending_session_prevents_further_live_codes():
     session_id = response.json()["id"]
 
     ended = client.post(
-        f"/api/attendance/sessions/{session_id}/end",
+        "/api/attendance/sessions/" + str(session_id) + "/end",
         headers=_headers(token),
     )
     assert ended.status_code == 200
     assert ended.json()["status"] == "ended"
 
     current = client.get(
-        f"/api/attendance/sessions/{session_id}",
+        "/api/attendance/sessions/" + str(session_id),
         headers=_headers(token),
     )
     assert current.status_code == 200
@@ -218,22 +237,14 @@ def test_replayed_qr_window_is_rejected_after_grace_period():
     )
 
 
-def test_totp_matches_rfc_6238_reference_vector():
-    # RFC 6238 Appendix B uses SHA-1, 8-digit output and a 30-second step.
-    # The application uses a configurable 5–15 second step and six digits.
-    import base64
-    import hashlib
-    import hmac
-    import struct
-
-    secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
-    key = base64.b32decode(secret)
-    counter = 1
-    digest = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
-    offset = digest[-1] & 0x0F
-    value = (
-        struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
-    ) % 100000000
-    assert f"{value:08d}" == "94287082"
-
-    assert len(totp_code(42, datetime(2026, 1, 1, tzinfo=timezone.utc))) == 6
+def test_rfc_6238_sha1_reference_vector():
+    # RFC 6238 Appendix B: secret 12345678901234567890, T=59,
+    # 30-second step, SHA-1 and 8 digits -> 94287082.
+    secret = b"12345678901234567890"
+    code = totp_code_from_secret(
+        secret,
+        datetime.fromtimestamp(59, tz=timezone.utc),
+        interval_seconds=30,
+        digits=8,
+    )
+    assert code == "94287082"

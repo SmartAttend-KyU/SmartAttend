@@ -24,6 +24,7 @@ from app.services.attendance import (
     validate_qr_token,
     validate_totp,
 )
+from app.services.audit import record_audit_event
 
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
@@ -68,6 +69,24 @@ def _session_response(
         qr_code=window.get("qr_code"),
         qr_expires_at=window.get("qr_expires_at"),
     )
+
+
+def _record_verification_failure(
+    db: Session,
+    *,
+    student_id: int,
+    session_id: int,
+    reason: str,
+) -> None:
+    record_audit_event(
+        db,
+        event_type="ATTENDANCE_VERIFICATION_FAILED",
+        user_id=student_id,
+        entity_type="attendance_session",
+        entity_id=session_id,
+        details=reason,
+    )
+    db.commit()
 
 
 @router.get("/courses", response_model=list[CourseResponse])
@@ -128,6 +147,15 @@ def create_session(
         refresh_interval_seconds=payload.refresh_interval_seconds,
     )
     db.add(session)
+    db.flush()
+    record_audit_event(
+        db,
+        event_type="ATTENDANCE_SESSION_STARTED",
+        user_id=lecturer.id,
+        entity_type="attendance_session",
+        entity_id=session.id,
+        details=f"course_id={course.id};refresh_interval={payload.refresh_interval_seconds}",
+    )
     db.commit()
     db.refresh(session)
 
@@ -159,6 +187,13 @@ def end_session(
 
     if session.ended_at is None:
         session.ended_at = utc_now()
+        record_audit_event(
+            db,
+            event_type="ATTENDANCE_SESSION_ENDED",
+            user_id=lecturer.id,
+            entity_type="attendance_session",
+            entity_id=session.id,
+        )
         db.commit()
         db.refresh(session)
 
@@ -181,6 +216,12 @@ def verify_attendance(
 
     now = utc_now()
     if session_status(session, now) != "active":
+        _record_verification_failure(
+            db,
+            student_id=student.id,
+            session_id=session.id,
+            reason="inactive_session",
+        )
         raise HTTPException(
             status_code=410,
             detail="Attendance session is not active",
@@ -192,6 +233,12 @@ def verify_attendance(
         now,
         interval_seconds=session.refresh_interval_seconds,
     ):
+        _record_verification_failure(
+            db,
+            student_id=student.id,
+            session_id=session.id,
+            reason="invalid_qr",
+        )
         raise HTTPException(status_code=400, detail="Invalid or expired QR code")
 
     if not validate_totp(
@@ -200,6 +247,12 @@ def verify_attendance(
         now,
         interval_seconds=session.refresh_interval_seconds,
     ):
+        _record_verification_failure(
+            db,
+            student_id=student.id,
+            session_id=session.id,
+            reason="invalid_totp",
+        )
         raise HTTPException(status_code=400, detail="Invalid or expired TOTP")
 
     enrolled = db.scalar(
@@ -211,6 +264,12 @@ def verify_attendance(
         )
     )
     if not enrolled:
+        _record_verification_failure(
+            db,
+            student_id=student.id,
+            session_id=session.id,
+            reason="not_enrolled",
+        )
         raise HTTPException(
             status_code=403,
             detail="Student is not enrolled in this course",
@@ -228,6 +287,12 @@ def verify_attendance(
         db.refresh(record)
     except IntegrityError:
         db.rollback()
+        _record_verification_failure(
+            db,
+            student_id=student.id,
+            session_id=session.id,
+            reason="duplicate_submission",
+        )
         raise HTTPException(
             status_code=409,
             detail="Attendance already recorded for this session",

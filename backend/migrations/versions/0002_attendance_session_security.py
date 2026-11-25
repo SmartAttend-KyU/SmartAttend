@@ -30,8 +30,18 @@ def upgrade() -> None:
             server_default="10",
         ),
     )
+    op.alter_column(
+        "attendance_records",
+        "verification_method",
+        server_default=sa.text("'qr_totp'"),
+    )
 
 
 def downgrade() -> None:
+    op.alter_column(
+        "attendance_records",
+        "verification_method",
+        server_default=sa.text("'rotating_code'"),
+    )
     op.drop_column("attendance_sessions", "refresh_interval_seconds")
     op.drop_column("attendance_sessions", "ended_at")
