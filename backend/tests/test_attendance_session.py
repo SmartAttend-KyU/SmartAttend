@@ -1,9 +1,12 @@
 import os
 
-os.environ.setdefault("APP_ENV", "test")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
-os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-key")
-os.environ.setdefault("DATABASE_URL", "sqlite://")
+# Force deterministic test settings even when CI provides production-like
+# environment variables. These assignments must happen before importing the
+# FastAPI application because app.db.session creates its engine at import time.
+os.environ["APP_ENV"] = "test"
+os.environ["SECRET_KEY"] = "test-secret-key"
+os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-key"
+os.environ["DATABASE_URL"] = "sqlite://"
 
 from datetime import datetime, timedelta, timezone
 
@@ -12,6 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import get_settings
 from app.db.session import Base, get_db
 from app.main import app
 from app.models.attendance import AttendanceSession
@@ -24,6 +28,9 @@ from app.services.attendance import (
     validate_qr_token,
 )
 
+# The settings function is cached. Clear any value that may have been created
+# by an earlier import before the test-specific environment is used.
+get_settings.cache_clear()
 
 engine = create_engine(
     "sqlite://",
@@ -50,7 +57,7 @@ def _login(university_id: str) -> str:
         "/api/auth/login",
         json={"university_id": university_id, "password": "ChangeMe123!"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     return response.json()["access_token"]
 
 
@@ -59,6 +66,9 @@ def _headers(token: str) -> dict[str, str]:
 
 
 def setup_function():
+    # Keep settings deterministic if another test imports/reloads configuration.
+    get_settings.cache_clear()
+
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
