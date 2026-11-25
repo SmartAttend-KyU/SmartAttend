@@ -31,6 +31,17 @@ class SessionResponse(BaseModel):
     qr_expires_at: datetime | None = None
 
 
+class StudentSessionResponse(BaseModel):
+    id: int
+    course_id: int
+    course_code: str
+    course_name: str
+    starts_at: datetime
+    expires_at: datetime
+    refresh_interval_seconds: int
+    status: str
+
+
 class AttendanceVerifyRequest(BaseModel):
     session_id: int
     qr_token: str = Field(min_length=20, max_length=256)
@@ -43,3 +54,22 @@ class AttendanceResponse(BaseModel):
     student_id: int
     recorded_at: datetime
     verification_method: str
+
+
+class AttendanceHistoryResponse(BaseModel):
+    id: int
+    session_id: int
+    course_id: int
+    course_code: str
+    course_name: str
+    recorded_at: datetime
+    verification_method: str
+
+
+class AttendanceSummaryResponse(BaseModel):
+    course_id: int
+    course_code: str
+    course_name: str
+    attended_sessions: int
+    total_sessions: int
+    percentage: float
