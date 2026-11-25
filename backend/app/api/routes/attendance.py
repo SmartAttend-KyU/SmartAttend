@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -10,11 +10,14 @@ from app.models.attendance import AttendanceRecord, AttendanceSession
 from app.models.course import Course, CourseEnrollment
 from app.models.user import User
 from app.schemas.attendance import (
+    AttendanceHistoryResponse,
     AttendanceResponse,
+    AttendanceSummaryResponse,
     AttendanceVerifyRequest,
     CourseResponse,
     SessionCreate,
     SessionResponse,
+    StudentSessionResponse,
 )
 from app.security.dependencies import require_role
 from app.services.attendance import (
@@ -105,6 +108,110 @@ def lecturer_courses(
     ]
 
 
+@router.get("/student/sessions", response_model=list[StudentSessionResponse])
+def student_active_sessions(
+    student: User = Depends(require_role("student")),
+    db: Session = Depends(get_db),
+):
+    now = utc_now()
+    rows = db.execute(
+        select(AttendanceSession, Course)
+        .join(Course, Course.id == AttendanceSession.course_id)
+        .join(CourseEnrollment, CourseEnrollment.course_id == Course.id)
+        .where(
+            CourseEnrollment.student_id == student.id,
+            AttendanceSession.ended_at.is_(None),
+            AttendanceSession.starts_at <= now,
+            AttendanceSession.expires_at > now,
+        )
+        .order_by(AttendanceSession.expires_at)
+    ).all()
+
+    return [
+        StudentSessionResponse(
+            id=session.id,
+            course_id=course.id,
+            course_code=course.code,
+            course_name=course.name,
+            starts_at=session.starts_at,
+            expires_at=session.expires_at,
+            refresh_interval_seconds=session.refresh_interval_seconds,
+            status="active",
+        )
+        for session, course in rows
+    ]
+
+
+@router.get("/student/history", response_model=list[AttendanceHistoryResponse])
+def student_attendance_history(
+    student: User = Depends(require_role("student")),
+    db: Session = Depends(get_db),
+):
+    rows = db.execute(
+        select(AttendanceRecord, AttendanceSession, Course)
+        .join(AttendanceSession, AttendanceSession.id == AttendanceRecord.session_id)
+        .join(Course, Course.id == AttendanceSession.course_id)
+        .where(AttendanceRecord.student_id == student.id)
+        .order_by(AttendanceRecord.recorded_at.desc())
+    ).all()
+
+    return [
+        AttendanceHistoryResponse(
+            id=record.id,
+            session_id=session.id,
+            course_id=course.id,
+            course_code=course.code,
+            course_name=course.name,
+            recorded_at=record.recorded_at,
+            verification_method=record.verification_method,
+        )
+        for record, session, course in rows
+    ]
+
+
+@router.get("/student/summary", response_model=list[AttendanceSummaryResponse])
+def student_attendance_summary(
+    student: User = Depends(require_role("student")),
+    db: Session = Depends(get_db),
+):
+    enrolled_courses = db.scalars(
+        select(Course)
+        .join(CourseEnrollment, CourseEnrollment.course_id == Course.id)
+        .where(CourseEnrollment.student_id == student.id)
+        .order_by(Course.code)
+    ).all()
+
+    summaries: list[AttendanceSummaryResponse] = []
+    for course in enrolled_courses:
+        total = db.scalar(
+            select(func.count(AttendanceSession.id)).where(
+                AttendanceSession.course_id == course.id
+            )
+        ) or 0
+        attended = db.scalar(
+            select(func.count(AttendanceRecord.id))
+            .join(AttendanceSession, AttendanceSession.id == AttendanceRecord.session_id)
+            .where(
+                AttendanceRecord.student_id == student.id,
+                AttendanceSession.course_id == course.id,
+            )
+        ) or 0
+
+        percentage = round((attended / total) * 100, 1) if total else 0.0
+        summaries.append(
+            AttendanceSummaryResponse(
+                course_id=course.id,
+                course_code=course.code,
+                course_name=course.name,
+                attended_sessions=attended,
+                total_sessions=total,
+                percentage=percentage,
+            )
+        )
+
+    return summaries
+
+
 @router.post(
     "/sessions",
     response_model=SessionResponse,
@@ -117,10 +224,7 @@ def create_session(
 ):
     course = _course_or_404(db, payload.course_id)
     if course.lecturer_id != lecturer.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Lecturer is not assigned to this course",
-        )
+        raise HTTPException(status_code=403, detail="Lecturer is not assigned to this course")
 
     now = utc_now()
     active_session = db.scalar(
@@ -200,11 +304,7 @@ def end_session(
     return _session_response(db, session, include_codes=False)
 
 
-@router.post(
-    "/verify",
-    response_model=AttendanceResponse,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/verify", response_model=AttendanceResponse, status_code=status.HTTP_201_CREATED)
 def verify_attendance(
     payload: AttendanceVerifyRequest,
     student: User = Depends(require_role("student")),
@@ -216,16 +316,8 @@ def verify_attendance(
 
     now = utc_now()
     if session_status(session, now) != "active":
-        _record_verification_failure(
-            db,
-            student_id=student.id,
-            session_id=session.id,
-            reason="inactive_session",
-        )
-        raise HTTPException(
-            status_code=410,
-            detail="Attendance session is not active",
-        )
+        _record_verification_failure(db, student_id=student.id, session_id=session.id, reason="inactive_session")
+        raise HTTPException(status_code=410, detail="Attendance session is not active")
 
     if not validate_qr_token(
         payload.qr_token,
@@ -233,12 +325,7 @@ def verify_attendance(
         now,
         interval_seconds=session.refresh_interval_seconds,
     ):
-        _record_verification_failure(
-            db,
-            student_id=student.id,
-            session_id=session.id,
-            reason="invalid_qr",
-        )
+        _record_verification_failure(db, student_id=student.id, session_id=session.id, reason="invalid_qr")
         raise HTTPException(status_code=400, detail="Invalid or expired QR code")
 
     if not validate_totp(
@@ -247,12 +334,7 @@ def verify_attendance(
         now,
         interval_seconds=session.refresh_interval_seconds,
     ):
-        _record_verification_failure(
-            db,
-            student_id=student.id,
-            session_id=session.id,
-            reason="invalid_totp",
-        )
+        _record_verification_failure(db, student_id=student.id, session_id=session.id, reason="invalid_totp")
         raise HTTPException(status_code=400, detail="Invalid or expired TOTP")
 
     enrolled = db.scalar(
@@ -264,16 +346,8 @@ def verify_attendance(
         )
     )
     if not enrolled:
-        _record_verification_failure(
-            db,
-            student_id=student.id,
-            session_id=session.id,
-            reason="not_enrolled",
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Student is not enrolled in this course",
-        )
+        _record_verification_failure(db, student_id=student.id, session_id=session.id, reason="not_enrolled")
+        raise HTTPException(status_code=403, detail="Student is not enrolled in this course")
 
     record = AttendanceRecord(
         session_id=session.id,
@@ -293,10 +367,7 @@ def verify_attendance(
             session_id=session.id,
             reason="duplicate_submission",
         )
-        raise HTTPException(
-            status_code=409,
-            detail="Attendance already recorded for this session",
-        )
+        raise HTTPException(status_code=409, detail="Attendance already recorded for this session")
 
     return AttendanceResponse(
         id=record.id,
