@@ -1,2 +1,3 @@
-from app.services.attendance import verification_code
-__all__ = ["verification_code"]
+"""Backend service layer for SmartAttend."""
+
+__all__: list[str] = []
